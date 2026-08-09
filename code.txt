@@ -1,0 +1,4381 @@
+package com.example.qrscanner
+
+
+
+import android.Manifest
+
+import android.bluetooth.BluetoothAdapter
+
+import android.bluetooth.BluetoothDevice
+
+import android.bluetooth.BluetoothSocket
+
+import android.content.pm.PackageManager
+
+import android.os.Build
+
+import android.os.Bundle
+
+import android.os.VibrationEffect
+
+import android.os.Vibrator
+
+import android.os.VibratorManager
+
+import android.util.Base64
+
+import android.util.Log
+
+import android.view.View
+
+import android.widget.*
+
+import androidx.annotation.OptIn
+
+import androidx.appcompat.app.AppCompatActivity
+
+import androidx.biometric.BiometricManager
+
+import androidx.biometric.BiometricPrompt
+
+import androidx.camera.core.*
+
+import androidx.camera.lifecycle.ProcessCameraProvider
+
+import androidx.core.app.ActivityCompat
+
+import androidx.core.content.ContextCompat
+
+import com.example.qrscanner.databinding.ActivityMainBinding
+
+import com.google.mlkit.vision.barcode.BarcodeScanner
+
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+
+import com.google.mlkit.vision.barcode.BarcodeScanning
+
+import com.google.mlkit.vision.barcode.common.Barcode
+
+import com.google.mlkit.vision.common.InputImage
+
+import kotlinx.coroutines.*
+
+import org.json.JSONArray
+
+import org.json.JSONObject
+
+import org.mindrot.jbcrypt.BCrypt
+
+import java.io.*
+
+import java.net.HttpURLConnection
+
+import java.net.InetSocketAddress
+
+import java.net.Socket
+
+import java.net.URL
+
+import java.text.SimpleDateFormat
+
+import java.util.Date
+
+import java.util.Locale
+
+import java.util.UUID
+
+import java.util.concurrent.Executor
+
+import java.util.concurrent.ExecutorService
+
+import java.util.concurrent.Executors
+
+
+
+class MainActivity : AppCompatActivity() {
+
+
+
+    // ── View binding ──────────────────────────────────────────────────────────
+
+    private lateinit var binding: ActivityMainBinding
+
+
+
+    // ── Screens ───────────────────────────────────────────────────────────────
+
+    private enum class Screen { LOGIN, HOME, METHOD_PICKER, SCANNER, RESULT, DETAIL }
+
+
+
+    // ── Connection mode ───────────────────────────────────────────────────────
+
+    private enum class ConnectionMode { USB, WIFI, BLUETOOTH }
+
+    private var connectionMode = ConnectionMode.USB
+
+    private var viewOnMobileMode = false
+
+
+
+    // ── Supabase Configuration ────────────────────────────────────────────────
+
+    private val SUPABASE_URL = "https://gkhsgzrpnvxdiyruusgj.supabase.co"
+
+    private val SUPABASE_KEY = "sb_secret_1N6A5lbfgnVpKUg0pOVfOA_sr_cIkzY"
+
+
+
+    // ── Active Manager Session ────────────────────────────────────────────────
+
+    private var managerUsername: String = ""
+
+    private var managerDisplayName: String = ""
+
+    private var appSecret: ByteArray? = null
+
+    private var systemKey: ByteArray? = null
+
+
+
+    // ── WiFi Target ───────────────────────────────────────────────────────────
+
+    private var wifiTargetIp = "127.0.0.1"
+
+    private val targetPort = 12345
+
+
+
+    // ── Bluetooth ─────────────────────────────────────────────────────────────
+
+    private var bluetoothAdapter: BluetoothAdapter? = null
+
+    private var selectedBtDevice: BluetoothDevice? = null
+
+    private val BT_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+
+
+    // ── Camera / ML Kit ───────────────────────────────────────────────────────
+
+    private lateinit var cameraExecutor: ExecutorService
+
+    private lateinit var barcodeScanner: BarcodeScanner
+
+    private var isScanningPaused = false
+
+
+
+    // ── Coroutines ────────────────────────────────────────────────────────────
+
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+
+
+    // ── Permission Codes ──────────────────────────────────────────────────────
+
+    companion object {
+
+        private const val TAG = "Form16Scanner"
+
+        private const val REQ_CAMERA = 101
+
+        private const val REQ_BLUETOOTH = 102
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // Lifecycle
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+
+        super.onCreate(savedInstanceState)
+
+        binding = ActivityMainBinding.inflate(layoutInflater)
+
+        setContentView(binding.root)
+
+
+
+        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
+
+
+        val options = BarcodeScannerOptions.Builder()
+
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+
+            .build()
+
+        barcodeScanner = BarcodeScanning.getClient(options)
+
+
+
+        setupLoginScreen()
+
+        setupHomeScreen()
+
+        setupMethodPicker()
+
+        setupScannerScreen()
+
+        setupResultScreen()
+
+        setupDetailScreen()
+
+
+
+        showScreen(Screen.LOGIN)
+
+    }
+
+
+
+    override fun onDestroy() {
+
+        super.onDestroy()
+
+        cameraExecutor.shutdown()
+
+        scope.cancel()
+
+    }
+
+
+
+    private fun showScreen(screen: Screen) {
+
+        runOnUiThread {
+
+            binding.viewFlipper.displayedChild = screen.ordinal
+
+        }
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // SCREEN 0: Manager Login
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun setupLoginScreen() {
+
+        binding.btnLoginSubmit.setOnClickListener {
+
+            val username = binding.loginUsername.text.toString().trim()
+
+            val password = binding.loginPassword.text.toString().trim()
+
+
+
+            if (username.isEmpty() || password.isEmpty()) {
+
+                Toast.makeText(this, "Please enter username and password", Toast.LENGTH_SHORT).show()
+
+                return@setOnClickListener
+
+            }
+
+
+
+            binding.btnLoginSubmit.isEnabled = false
+
+            binding.btnLoginSubmit.text = "Authenticating..."
+
+
+
+            scope.launch {
+
+                val success = attemptLogin(username, password)
+
+                binding.btnLoginSubmit.isEnabled = true
+
+                binding.btnLoginSubmit.text = "Sign In"
+
+
+
+                if (success) {
+
+                    binding.loginUsername.text.clear()
+
+                    binding.loginPassword.text.clear()
+
+                    binding.homeTitleWelcome.text = "Welcome, $managerDisplayName"
+
+                    showScreen(Screen.HOME)
+
+                } else {
+
+                    Toast.makeText(this@MainActivity, "Invalid username or password", Toast.LENGTH_LONG).show()
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+
+    private suspend fun attemptLogin(username: String, password: String): Boolean =
+
+        withContext(Dispatchers.IO) {
+
+            try {
+
+                // PostgREST REST API call
+
+                val urlStr = "$SUPABASE_URL/rest/v1/managers?username=eq.$username"
+
+                val response = makeHttpRequest(urlStr) ?: return@withContext false
+
+                val arr = JSONArray(response)
+
+                if (arr.length() == 0) return@withContext false
+
+
+
+                val mObj = arr.getJSONObject(0)
+
+                val pwdHash = mObj.getString("password_hash")
+
+
+
+                // BCrypt check
+
+                // BCrypt check
+
+                val compatibleHash = pwdHash.replaceFirst("$2b$", "$2a$")
+
+                if (!BCrypt.checkpw(password, compatibleHash)) return@withContext false
+
+
+
+                // Decrypt app_secret
+
+                val displayStr = mObj.optString("display_name", "")
+
+                var realName = username
+
+                var secretBytes: ByteArray? = null
+
+
+
+                if (displayStr.startsWith("{")) {
+
+                    val displayPayload = JSONObject(displayStr)
+
+                    realName = displayPayload.optString("real_name", username)
+
+                    if (displayPayload.has("enc_app_secret")) {
+
+                        val enc = displayPayload.getJSONObject("enc_app_secret")
+
+                        secretBytes = CryptoHelper.decryptAppSecret(
+
+                            saltB64 = enc.getString("salt"),
+
+                            nonceB64 = enc.getString("nonce"),
+
+                            ciphertextB64 = enc.getString("ciphertext"),
+
+                            password = password
+
+                        )
+
+                    }
+
+                }
+
+
+
+                // Initialize manager session keys
+
+                managerUsername = username
+
+                managerDisplayName = realName
+
+                if (secretBytes != null) {
+
+                    appSecret = secretBytes
+
+                    systemKey = CryptoHelper.deriveSystemKey(secretBytes)
+
+                } else {
+
+                    appSecret = null
+
+                    systemKey = null
+
+                }
+
+                true
+
+            } catch (e: Exception) {
+
+                Log.e(TAG, "Login attempt error", e)
+
+                false
+
+            }
+
+        }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // SCREEN 1: Home
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun setupHomeScreen() {
+
+        binding.btnHomeLogout.setOnClickListener {
+
+            managerUsername = ""
+
+            managerDisplayName = ""
+
+            appSecret = null
+
+            systemKey = null
+
+            showScreen(Screen.LOGIN)
+
+        }
+
+
+
+        binding.btnSendToDesktop.setOnClickListener {
+
+            viewOnMobileMode = false
+
+            showScreen(Screen.METHOD_PICKER)
+
+        }
+
+
+
+        binding.btnViewOnMobile.setOnClickListener {
+
+            if (appSecret == null) {
+
+                Toast.makeText(
+
+                    this@MainActivity,
+
+                    "Decryption keys not synced. Please log in on the desktop app first to upload keys.",
+
+                    Toast.LENGTH_LONG
+
+                ).show()
+
+                return@setOnClickListener
+
+            }
+
+            viewOnMobileMode = true
+
+            requestCameraAndStartScanner()
+
+        }
+
+    }
+
+
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // SCREEN 2: Method Picker
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun setupMethodPicker() {
+
+        binding.btnMethodBack.setOnClickListener { showScreen(Screen.HOME) }
+
+
+
+        // USB
+
+        binding.btnMethodUsb.setOnClickListener {
+
+            connectionMode = ConnectionMode.USB
+
+            binding.connectionBadge.text = "🔌 USB"
+
+            binding.connectionBadge.setTextColor(ContextCompat.getColor(this, R.color.color_primary))
+
+            hideMethodSubViews()
+
+            requestCameraAndStartScanner()
+
+        }
+
+
+
+        // Bluetooth
+
+        binding.btnMethodBluetooth.setOnClickListener {
+
+            connectionMode = ConnectionMode.BLUETOOTH
+
+            binding.connectionBadge.text = "🔵 Bluetooth"
+
+            binding.connectionBadge.setTextColor(ContextCompat.getColor(this, R.color.color_secondary))
+
+            hideMethodSubViews()
+
+            showBluetoothPicker()
+
+        }
+
+
+
+        // WiFi
+
+        binding.btnMethodWifi.setOnClickListener {
+
+            connectionMode = ConnectionMode.WIFI
+
+            binding.connectionBadge.text = "📶 WiFi"
+
+            binding.connectionBadge.setTextColor(ContextCompat.getColor(this, R.color.color_warning))
+
+            hideMethodSubViews()
+
+            showWifiInput()
+
+        }
+
+
+
+        binding.wifiConnectBtn.setOnClickListener {
+
+            val ip = binding.wifiIpInput.text.toString().trim()
+
+            if (ip.isEmpty()) {
+
+                Toast.makeText(this, "Please enter laptop IP address", Toast.LENGTH_SHORT).show()
+
+                return@setOnClickListener
+
+            }
+
+            wifiTargetIp = ip
+
+            requestCameraAndStartScanner()
+
+        }
+
+    }
+
+
+
+    private fun hideMethodSubViews() {
+
+        binding.wifiInputLayout.visibility = View.GONE
+
+        binding.btDeviceLayout.visibility = View.GONE
+
+    }
+
+
+
+    private fun showWifiInput() {
+
+        binding.wifiInputLayout.visibility = View.VISIBLE
+
+        binding.btDeviceLayout.visibility = View.GONE
+
+    }
+
+
+
+    private fun showBluetoothPicker() {
+
+        binding.btDeviceLayout.visibility = View.VISIBLE
+
+        binding.wifiInputLayout.visibility = View.GONE
+
+
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+
+                != PackageManager.PERMISSION_GRANTED) {
+
+                ActivityCompat.requestPermissions(
+
+                    this,
+
+                    arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN),
+
+                    REQ_BLUETOOTH
+
+                )
+
+                return
+
+            }
+
+        }
+
+        populateBluetoothDevices()
+
+    }
+
+
+
+    private fun populateBluetoothDevices() {
+
+        val listContainer = binding.btDeviceList
+
+        listContainer.removeAllViews()
+
+
+
+        val adapter = bluetoothAdapter
+
+        if (adapter == null || !adapter.isEnabled) {
+
+            binding.btNoDevicesText.visibility = View.VISIBLE
+
+            binding.btNoDevicesText.text = "Bluetooth is off.\nPlease enable Bluetooth in Settings."
+
+            return
+
+        }
+
+
+
+        @Suppress("MissingPermission")
+
+        val pairedDevices: Set<BluetoothDevice> = adapter.bondedDevices ?: emptySet()
+
+
+
+        if (pairedDevices.isEmpty()) {
+
+            binding.btNoDevicesText.visibility = View.VISIBLE
+
+            return
+
+        }
+
+
+
+        binding.btNoDevicesText.visibility = View.GONE
+
+
+
+        for (device in pairedDevices) {
+
+            @Suppress("MissingPermission")
+
+            val deviceName = device.name ?: "Unknown Device"
+
+            @Suppress("MissingPermission")
+
+            val deviceAddress = device.address
+
+
+
+            val btn = Button(this).apply {
+
+                text = "🔵  $deviceName\n$deviceAddress"
+
+                textSize = 13f
+
+                setPadding(24, 16, 24, 16)
+
+                setBackgroundColor(ContextCompat.getColor(context, R.color.surface_dark_2))
+
+                setTextColor(ContextCompat.getColor(context, R.color.white))
+
+                layoutParams = LinearLayout.LayoutParams(
+
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+
+                ).apply { bottomMargin = 8 }
+
+                setOnClickListener {
+
+                    selectedBtDevice = device
+
+                    requestCameraAndStartScanner()
+
+                }
+
+            }
+
+            listContainer.addView(btn)
+
+        }
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // SCREEN 3: QR Scanner
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun setupScannerScreen() {
+
+        binding.btnScannerBack.setOnClickListener {
+
+            isScanningPaused = true
+
+            if (viewOnMobileMode) showScreen(Screen.HOME)
+
+            else showScreen(Screen.METHOD_PICKER)
+
+        }
+
+    }
+
+
+
+    private fun requestCameraAndStartScanner() {
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+
+            == PackageManager.PERMISSION_GRANTED) {
+
+            showScreen(Screen.SCANNER)
+
+            isScanningPaused = false
+
+            setScanStatus("📸  Align QR code within the frame", "Hold steady — auto-detects when in frame")
+
+            startCamera()
+
+        } else {
+
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQ_CAMERA)
+
+        }
+
+    }
+
+
+
+    private fun startCamera() {
+
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+
+        cameraProviderFuture.addListener({
+
+            val cameraProvider = cameraProviderFuture.get()
+
+            val preview = Preview.Builder().build().also {
+
+                it.setSurfaceProvider(binding.previewView.surfaceProvider)
+
+            }
+
+            val analyzer = ImageAnalysis.Builder()
+
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+
+                .build().also {
+
+                    it.setAnalyzer(cameraExecutor) { imageProxy -> processImageProxy(imageProxy) }
+
+                }
+
+
+
+            try {
+
+                cameraProvider.unbindAll()
+
+                cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analyzer)
+
+            } catch (e: Exception) {
+
+                Log.e(TAG, "Camera binding failed", e)
+
+            }
+
+        }, ContextCompat.getMainExecutor(this))
+
+    }
+
+
+
+    @OptIn(ExperimentalGetImage::class)
+
+    private fun processImageProxy(imageProxy: ImageProxy) {
+
+        if (isScanningPaused) { imageProxy.close(); return }
+
+        val mediaImage = imageProxy.image ?: run { imageProxy.close(); return }
+
+        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+
+
+
+        barcodeScanner.process(image)
+
+            .addOnSuccessListener { barcodes ->
+
+                barcodes.firstOrNull()?.rawValue?.let { onQrDetected(it) }
+
+            }
+
+            .addOnFailureListener { Log.e(TAG, "ML Kit error", it) }
+
+            .addOnCompleteListener { imageProxy.close() }
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // QR Payload processing & share
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun onQrDetected(rawValue: String) {
+
+        if (isScanningPaused) return
+
+        isScanningPaused = true
+
+        triggerVibration()
+
+
+
+        if (viewOnMobileMode) {
+
+            // Fingerprint check then decrypt
+
+            authenticateFingerprint {
+
+                fetchAndDisplayForm16(rawValue)
+
+            }
+
+        } else {
+
+            // Share to desktop
+
+            setScanStatus("🔌 Sending QR payload...", "Connecting to desktop...")
+
+            scope.launch {
+
+                val success = when (connectionMode) {
+
+                    ConnectionMode.USB -> sendViaTcp(rawValue, "127.0.0.1", targetPort)
+
+                    ConnectionMode.WIFI -> sendViaTcp(rawValue, wifiTargetIp, targetPort)
+
+                    ConnectionMode.BLUETOOTH -> sendViaBluetooth(rawValue)
+
+                }
+
+                if (success) {
+
+                    showDesktopSentResult(rawValue)
+
+                } else {
+
+                    showErrorResult("Desktop connection failed.")
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+
+    private fun authenticateFingerprint(onSuccess: () -> Unit) {
+
+        val biometricManager = BiometricManager.from(this)
+
+        if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+
+            != BiometricManager.BIOMETRIC_SUCCESS) {
+
+            // Biometric not available, bypass or warn
+
+            onSuccess()
+
+            return
+
+        }
+
+
+
+        val executor = ContextCompat.getMainExecutor(this)
+
+        val prompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+
+                super.onAuthenticationSucceeded(result)
+
+                runOnUiThread { onSuccess() }
+
+            }
+
+
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+
+                super.onAuthenticationError(errorCode, errString)
+
+                Toast.makeText(this@MainActivity, "Auth Error: $errString", Toast.LENGTH_SHORT).show()
+
+                isScanningPaused = false // retry scan
+
+                showScreen(Screen.HOME)
+
+            }
+
+
+
+            override fun onAuthenticationFailed() {
+
+                super.onAuthenticationFailed()
+
+                Toast.makeText(this@MainActivity, "Auth Failed", Toast.LENGTH_SHORT).show()
+
+            }
+
+        })
+
+
+
+        val info = BiometricPrompt.PromptInfo.Builder()
+
+            .setTitle("Authenticate scan")
+
+            .setSubtitle("Confirm manager identity to decrypt data on this device.")
+
+            .setNegativeButtonText("Cancel")
+
+            .build()
+
+
+
+        prompt.authenticate(info)
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // Fetch and Decrypt details (Mobile mode)
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun fetchAndDisplayForm16(qrData: String) {
+
+        val secret = appSecret ?: return
+
+        val sKey = systemKey ?: return
+
+
+
+        scope.launch {
+
+            setScanStatus("⏳ Fetching...", "Downloading tax records from cloud...")
+
+            showScreen(Screen.SCANNER) // keep on scanner to show status card
+
+
+
+            val form16Data = withContext(Dispatchers.IO) {
+
+                try {
+
+                    // 1. Decode QR & Verify signature
+
+                    val raw = Base64.decode(qrData, Base64.DEFAULT)
+
+                    val payload = JSONObject(String(raw))
+
+                    val sig = payload.getString("sig")
+
+                    val eid = payload.getString("eid")
+
+                    val ts = payload.getString("ts")
+
+
+
+                    // 2. Fetch employee
+
+                    val empUrl = "$SUPABASE_URL/rest/v1/employee?hashed_employee_id=eq.$eid"
+
+                    val empRes = makeHttpRequest(empUrl) ?: return@withContext null
+
+                    val empArray = JSONArray(empRes)
+
+                    if (empArray.length() == 0) return@withContext null
+
+                    val empObj = empArray.getJSONObject(0)
+
+                    val employeeId = empObj.getInt("employee_id")
+
+                    val employerId = empObj.getInt("employer_id")
+
+
+
+                    // 3. Fetch employer
+
+                    val erUrl = "$SUPABASE_URL/rest/v1/employer?employer_id=eq.$employerId"
+
+                    val erRes = makeHttpRequest(erUrl) ?: return@withContext null
+
+                    val erObj = JSONArray(erRes).getJSONObject(0)
+
+
+
+                    // 4. Fetch Form 16 header
+
+                    val f16Url = "$SUPABASE_URL/rest/v1/form16?employee_id=eq.$employeeId&order=form16_id.desc"
+
+                    val f16Res = makeHttpRequest(f16Url) ?: return@withContext null
+
+                    val f16Obj = JSONArray(f16Res).getJSONObject(0)
+
+                    val form16Id = f16Obj.getInt("form16_id")
+
+
+
+                    // 5. Fetch sub-details
+
+                    val salUrl = "$SUPABASE_URL/rest/v1/salary_details?form16_id=eq.$form16Id"
+
+                    val salObj = JSONArray(makeHttpRequest(salUrl) ?: "[]").optJSONObject(0)
+
+
+
+                    val othUrl = "$SUPABASE_URL/rest/v1/other_income?form16_id=eq.$form16Id"
+
+                    val othObj = JSONArray(makeHttpRequest(othUrl) ?: "[]").optJSONObject(0)
+
+
+
+                    val dedUrl = "$SUPABASE_URL/rest/v1/deductions?form16_id=eq.$form16Id"
+
+                    val dedObj = JSONArray(makeHttpRequest(dedUrl) ?: "[]").optJSONObject(0)
+
+
+
+                    val taxUrl = "$SUPABASE_URL/rest/v1/tax_details?form16_id=eq.$form16Id"
+
+                    val taxObj = JSONArray(makeHttpRequest(taxUrl) ?: "[]").optJSONObject(0)
+
+
+
+                    val tdsUrl = "$SUPABASE_URL/rest/v1/tds_details?form16_id=eq.$form16Id&order=quarter.asc"
+
+                    val tdsArray = JSONArray(makeHttpRequest(tdsUrl) ?: "[]")
+
+
+
+                    // Build response package
+
+                    JSONObject().apply {
+
+                        put("employee", empObj)
+
+                        put("employer", erObj)
+
+                        put("form16", f16Obj)
+
+                        put("salary", salObj)
+
+                        put("other_income", othObj)
+
+                        put("deductions", dedObj)
+
+                        put("tax", taxObj)
+
+                        put("tds", tdsArray)
+
+                    }
+
+                } catch (e: Exception) {
+
+                    Log.e(TAG, "Form16 retrieval error", e)
+
+                    null
+
+                }
+
+            }
+
+
+
+            if (form16Data != null) {
+
+                decryptAndPopulateDetailScreen(form16Data, sKey)
+
+                showScreen(Screen.DETAIL)
+
+            } else {
+
+                showErrorResult("Record could not be retrieved from database.")
+
+            }
+
+        }
+
+    }
+
+
+
+    private fun decryptAndPopulateDetailScreen(data: JSONObject, systemKey: ByteArray) {
+
+        val dec = { k: String, obj: JSONObject -> CryptoHelper.decryptData(obj.optString(k, ""), systemKey) }
+
+
+
+        // Employee
+
+        val emp = data.getJSONObject("employee")
+
+        val name = dec("employee_name", emp)
+
+        binding.detailEmpName.text = name
+
+        binding.detailEmpInfoBlock.text = """
+
+            PAN: ${dec("pan", emp)}
+
+            Email: ${dec("email", emp)}
+
+            Mobile: ${dec("mobile_number", emp)}
+
+            Reference: ${dec("reference_number", emp)}
+
+            Address: ${dec("address", emp)}, ${dec("city", emp)} - ${dec("pin_code", emp)}
+
+        """.trimIndent()
+
+
+
+        // Form16 Header
+
+        val f16 = data.getJSONObject("form16")
+
+        binding.detailEmpYears.text = "FY: ${dec("financial_year", f16)}  |  AY: ${dec("assessment_year", f16)}\nPeriod: ${dec("employment_from", f16)} to ${dec("employment_to", f16)}"
+
+
+
+        // Employer
+
+        val er = data.getJSONObject("employer")
+
+        binding.detailEmployerBlock.text = """
+
+            Name: ${dec("employer_name", er)}
+
+            PAN: ${dec("pan", er)}
+
+            TAN: ${dec("tan", er)}
+
+        """.trimIndent()
+
+
+
+        // Salary
+
+        val sal = data.optJSONObject("salary")
+
+        if (sal != null) {
+
+            binding.detailSalaryBlock.text = """
+
+                Gross Salary: ₹${dec("gross_salary", sal)}
+
+                Perquisites: ₹${dec("perquisites", sal)}
+
+                Total Salary: ₹${dec("total_salary", sal)}
+
+                Standard Deduction: ₹${dec("standard_deduction", sal)}
+
+                Professional Tax: ₹${dec("professional_tax", sal)}
+
+                HRA Exemption: ₹${dec("hra_exemption", sal)}
+
+                Net Salary: ₹${dec("total_salary_after_exemptions", sal)}
+
+            """.trimIndent()
+
+        }
+
+
+
+        // Deductions
+
+        val ded = data.optJSONObject("deductions")
+
+        if (ded != null) {
+
+            binding.detailDeductionsBlock.text = """
+
+                80C: ₹${dec("deduction_80c", ded)}
+
+                80D: ₹${dec("deduction_80d", ded)}
+
+                80E: ₹${dec("deduction_80e", ded)}
+
+                Other: ₹${dec("other_deductions", ded)}
+
+                Total Deductions: ₹${dec("total_deductions", ded)}
+
+            """.trimIndent()
+
+        }
+
+
+
+        // Tax details
+
+        val tax = data.optJSONObject("tax")
+
+        if (tax != null) {
+
+            binding.detailTaxBlock.text = """
+
+                Taxable Income: ₹${dec("taxable_income", tax)}
+
+                Income Tax: ₹${dec("income_tax", tax)}
+
+                Rebate 87A: ₹${dec("rebate_87a", tax)}
+
+                Health & Cess: ₹${dec("health_education_cess", tax)}
+
+                Net Tax Payable: ₹${dec("net_tax_payable", tax)}
+
+            """.trimIndent()
+
+        }
+
+
+
+        // TDS
+
+        val tds = data.optJSONArray("tds")
+
+        binding.detailTdsLayout.removeAllViews()
+
+        if (tds != null && tds.length() > 0) {
+
+            for (i in 0 until tds.length()) {
+
+                val tObj = tds.getJSONObject(i)
+
+                val row = TextView(this).apply {
+
+                    text = "Q${tObj.optString("quarter")} — Paid: ₹${dec("amount_paid", tObj)} | Deposited: ₹${dec("tax_deposited", tObj)}\nChallan: ${dec("challan_number", tObj)} (${dec("challan_date", tObj)})"
+
+                    textSize = 12f
+
+                    setTextColor(ContextCompat.getColor(context, R.color.text_muted))
+
+                    setPadding(0, 4, 0, 8)
+
+                }
+
+                binding.detailTdsLayout.addView(row)
+
+            }
+
+        } else {
+
+            binding.detailTdsLayout.addView(TextView(this).apply {
+
+                text = "No quarterly TDS reports found."
+
+                textSize = 12f
+
+                setTextColor(ContextCompat.getColor(context, R.color.text_muted))
+
+            })
+
+        }
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // SCREEN 4 & 5: Result / Detail actions
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun setupResultScreen() {
+
+        binding.btnScanAgain.setOnClickListener {
+
+            isScanningPaused = false
+
+            requestCameraAndStartScanner()
+
+        }
+
+        binding.btnResultHome.setOnClickListener {
+
+            showScreen(Screen.HOME)
+
+        }
+
+    }
+
+
+
+    private fun setupDetailScreen() {
+
+        binding.btnDetailBack.setOnClickListener {
+
+            showScreen(Screen.HOME)
+
+        }
+
+    }
+
+
+
+    private fun showDesktopSentResult(rawValue: String) {
+
+        updateResultScreen(
+
+            icon = "✅",
+
+            title = "Sent to Desktop!",
+
+            subtitle = "Data received by the laptop.\nEnter your manager password on the desktop app to decrypt and view the Form 16.",
+
+            payload = rawValue.take(60) + if (rawValue.length > 60) "…" else "",
+
+            isSuccess = true
+
+        )
+
+        showScreen(Screen.RESULT)
+
+    }
+
+
+
+    private fun showErrorResult(error: String) {
+
+        updateResultScreen(
+
+            icon = "❌",
+
+            title = "Scan Failed",
+
+            subtitle = "$error\n\nPlease check connection status and try again.",
+
+            payload = "Error",
+
+            isSuccess = false
+
+        )
+
+        showScreen(Screen.RESULT)
+
+    }
+
+
+
+    private fun updateResultScreen(icon: String, title: String, subtitle: String,
+
+                                   payload: String, isSuccess: Boolean) {
+
+        runOnUiThread {
+
+            binding.resultIcon.text = icon
+
+            binding.resultTitle.text = title
+
+            binding.resultTitle.setTextColor(
+
+                ContextCompat.getColor(this, if (isSuccess) R.color.color_success else R.color.color_error)
+
+            )
+
+            binding.resultSubtitle.text = subtitle
+
+            binding.resultPayloadText.text = payload
+
+            binding.resultIcon.backgroundTintList =
+
+                ContextCompat.getColorStateList(this, if (isSuccess) R.color.color_primary else R.color.color_error)
+
+            binding.btnScanAgain.visibility = if (isSuccess) View.GONE else View.VISIBLE
+
+        }
+
+    }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // Networking (HTTP / TCP / Bluetooth)
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private suspend fun makeHttpRequest(urlStr: String): String? =
+
+        withContext(Dispatchers.IO) {
+
+            var conn: HttpURLConnection? = null
+
+            try {
+
+                val url = URL(urlStr)
+
+                conn = url.openConnection() as HttpURLConnection
+
+                conn.requestMethod = "GET"
+
+                conn.setRequestProperty("apikey", SUPABASE_KEY)
+
+                conn.setRequestProperty("Authorization", "Bearer $SUPABASE_KEY")
+
+                conn.connectTimeout = 6000
+
+                conn.readTimeout = 6000
+
+
+
+                if (conn.responseCode == 200) {
+
+                    conn.inputStream.bufferedReader().use { it.readText() }
+
+                } else {
+
+                    null
+
+                }
+
+            } catch (e: Exception) {
+
+                Log.e(TAG, "HTTP error: ${e.message}")
+
+                null
+
+            } finally {
+
+                conn?.disconnect()
+
+            }
+
+        }
+
+
+
+    private suspend fun sendViaTcp(payload: String, ip: String, port: Int): Boolean =
+
+        withContext(Dispatchers.IO) {
+
+            var socket: Socket? = null
+
+            return@withContext try {
+
+                socket = Socket()
+
+                socket.connect(InetSocketAddress(ip, port), 4000)
+
+                PrintWriter(BufferedWriter(OutputStreamWriter(socket.getOutputStream())), true)
+
+                    .also { it.println(payload); it.flush(); it.close() }
+
+                true
+
+            } catch (e: Exception) {
+
+                Log.e(TAG, "TCP send failed", e)
+
+                false
+
+            } finally {
+
+                try { socket?.close() } catch (_: Exception) {}
+
+            }
+
+        }
+
+
+
+    private suspend fun sendViaBluetooth(payload: String): Boolean =
+
+        withContext(Dispatchers.IO) {
+
+            val device = selectedBtDevice ?: return@withContext false
+
+            var socket: BluetoothSocket? = null
+
+            return@withContext try {
+
+                @Suppress("MissingPermission")
+
+                socket = device.createRfcommSocketToServiceRecord(BT_UUID)
+
+                @Suppress("MissingPermission")
+
+                socket.connect()
+
+                val out = socket.outputStream
+
+                out.write((payload + "\n").toByteArray(Charsets.UTF_8))
+
+                out.flush()
+
+                true
+
+            } catch (e: Exception) {
+
+                Log.e(TAG, "Bluetooth send failed", e)
+
+                false
+
+            } finally {
+
+                try { socket?.close() } catch (_: Exception) {}
+
+            }
+
+        }
+
+
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // Helpers
+
+    // ══════════════════════════════════════════════════════════════════════════
+
+
+
+    private fun setScanStatus(primary: String, secondary: String) {
+
+        runOnUiThread {
+
+            binding.scanStatusText.text = primary
+
+            binding.scanSubText.text = secondary
+
+        }
+
+    }
+
+
+
+    private fun triggerVibration() {
+
+        try {
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+
+                val vm = getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager
+
+                vm.defaultVibrator.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
+
+            } else {
+
+                @Suppress("DEPRECATION")
+
+                val v = getSystemService(VIBRATOR_SERVICE) as Vibrator
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+
+                    v.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
+
+                else
+
+                    @Suppress("DEPRECATION") v.vibrate(120)
+
+            }
+
+        } catch (e: Exception) { Log.e(TAG, "Vibration failed", e) }
+
+    }
+
+
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        when (requestCode) {
+
+            REQ_CAMERA -> {
+
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+
+                    showScreen(Screen.SCANNER)
+
+                    isScanningPaused = false
+
+                    startCamera()
+
+                } else {
+
+                    Toast.makeText(this, "Camera permission required", Toast.LENGTH_LONG).show()
+
+                }
+
+            }
+
+            REQ_BLUETOOTH -> {
+
+                if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+
+                    populateBluetoothDevices()
+
+                } else {
+
+                    Toast.makeText(this, "Bluetooth permissions denied", Toast.LENGTH_SHORT).show()
+
+                }
+
+            }
+
+        }
+
+    }
+
+}
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Root ViewFlipper holds all 6 screens: LOGIN, HOME, METHOD_PICKER, SCANNER, RESULT, DETAIL -->
+
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+
+    xmlns:tools="http://schemas.android.com/tools"
+
+    android:layout_width="match_parent"
+
+    android:layout_height="match_parent"
+
+    android:background="@color/bg_dark"
+
+    tools:context=".MainActivity">
+
+
+
+    <ViewFlipper
+
+        android:id="@+id/viewFlipper"
+
+        android:layout_width="match_parent"
+
+        android:layout_height="match_parent"
+
+        android:inAnimation="@android:anim/fade_in"
+
+        android:outAnimation="@android:anim/fade_out">
+
+
+
+        <!-- ═══════════════════════════════════════════════════════════
+
+             SCREEN 0: MANAGER LOGIN
+
+             ═══════════════════════════════════════════════════════════ -->
+
+        <LinearLayout
+
+            android:id="@+id/screenLogin"
+
+            android:layout_width="match_parent"
+
+            android:layout_height="match_parent"
+
+            android:gravity="center"
+
+            android:orientation="vertical"
+
+            android:padding="32dp"
+
+            android:background="@color/bg_dark">
+
+
+
+            <!-- Logo -->
+
+            <TextView
+
+                android:layout_width="80dp"
+
+                android:layout_height="80dp"
+
+                android:background="@drawable/circle_bg_primary"
+
+                android:gravity="center"
+
+                android:text="🔒"
+
+                android:textSize="36sp"
+
+                android:layout_marginBottom="24dp" />
+
+
+
+            <!-- Title -->
+
+            <TextView
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="Manager Login"
+
+                android:textColor="@color/white"
+
+                android:textSize="26sp"
+
+                android:textStyle="bold"
+
+                android:layout_marginBottom="6dp" />
+
+
+
+            <TextView
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="Enter credentials to access scanning and local decryption keys."
+
+                android:textColor="@color/text_muted"
+
+                android:textSize="12sp"
+
+                android:gravity="center"
+
+                android:layout_marginBottom="36dp" />
+
+
+
+            <!-- Input Username -->
+
+            <EditText
+
+                android:id="@+id/loginUsername"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="54dp"
+
+                android:layout_marginBottom="14dp"
+
+                android:background="@color/surface_dark"
+
+                android:hint="Username"
+
+                android:inputType="text"
+
+                android:paddingHorizontal="18dp"
+
+                android:textColor="@color/white"
+
+                android:textColorHint="@color/text_muted"
+
+                android:textSize="15sp"
+
+                android:backgroundTint="@color/surface_dark"
+
+                tools:ignore="LabelFor" />
+
+
+
+            <!-- Input Password -->
+
+            <EditText
+
+                android:id="@+id/loginPassword"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="54dp"
+
+                android:layout_marginBottom="28dp"
+
+                android:background="@color/surface_dark"
+
+                android:hint="Password"
+
+                android:inputType="textPassword"
+
+                android:paddingHorizontal="18dp"
+
+                android:textColor="@color/white"
+
+                android:textColorHint="@color/text_muted"
+
+                android:textSize="15sp"
+
+                android:backgroundTint="@color/surface_dark"
+
+                tools:ignore="LabelFor" />
+
+
+
+            <!-- Action Button -->
+
+            <Button
+
+                android:id="@+id/btnLoginSubmit"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="54dp"
+
+                android:backgroundTint="@color/color_primary"
+
+                android:text="Sign In"
+
+                android:textAllCaps="false"
+
+                android:textColor="#0D1117"
+
+                android:textSize="15sp"
+
+                android:textStyle="bold" />
+
+
+
+        </LinearLayout>
+
+
+
+        <!-- ═══════════════════════════════════════════════════════════
+
+             SCREEN 1: HOME
+
+             ═══════════════════════════════════════════════════════════ -->
+
+        <LinearLayout
+
+            android:id="@+id/screenHome"
+
+            android:layout_width="match_parent"
+
+            android:layout_height="match_parent"
+
+            android:orientation="vertical"
+
+            android:padding="28dp"
+
+            android:background="@color/bg_dark">
+
+
+
+            <!-- Navbar -->
+
+            <LinearLayout
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:orientation="horizontal"
+
+                android:gravity="center_vertical"
+
+                android:layout_marginBottom="40dp">
+
+
+
+                <TextView
+
+                    android:id="@+id/homeTitleWelcome"
+
+                    android:layout_width="0dp"
+
+                    android:layout_height="wrap_content"
+
+                    android:layout_weight="1"
+
+                    android:text="Welcome, Manager"
+
+                    android:textColor="@color/white"
+
+                    android:textSize="20sp"
+
+                    android:textStyle="bold" />
+
+
+
+                <TextView
+
+                    android:id="@+id/btnHomeLogout"
+
+                    android:layout_width="wrap_content"
+
+                    android:layout_height="wrap_content"
+
+                    android:text="Logout"
+
+                    android:textColor="@color/color_error"
+
+                    android:textSize="13sp"
+
+                    android:padding="8dp"
+
+                    android:clickable="true"
+
+                    android:focusable="true" />
+
+            </LinearLayout>
+
+
+
+            <TextView
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="Select Scan Mode"
+
+                android:textColor="@color/text_muted"
+
+                android:textSize="13sp"
+
+                android:textStyle="bold"
+
+                android:layout_marginBottom="16dp" />
+
+
+
+            <!-- Action: Send to Desktop -->
+
+            <androidx.cardview.widget.CardView
+
+                android:id="@+id/btnSendToDesktop"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="96dp"
+
+                android:layout_marginBottom="16dp"
+
+                android:foreground="?attr/selectableItemBackground"
+
+                android:clickable="true"
+
+                android:focusable="true"
+
+                app:cardBackgroundColor="@color/color_primary"
+
+                app:cardCornerRadius="20dp"
+
+                app:cardElevation="6dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="match_parent"
+
+                    android:gravity="center_vertical"
+
+                    android:orientation="horizontal"
+
+                    android:paddingHorizontal="24dp">
+
+
+
+                    <TextView
+
+                        android:layout_width="52dp"
+
+                        android:layout_height="52dp"
+
+                        android:background="@drawable/circle_bg_dark"
+
+                        android:gravity="center"
+
+                        android:text="🖥"
+
+                        android:textSize="24sp" />
+
+
+
+                    <LinearLayout
+
+                        android:layout_width="0dp"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_weight="1"
+
+                        android:orientation="vertical"
+
+                        android:paddingStart="16dp">
+
+
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="View in Desktop"
+
+                            android:textColor="#0D1117"
+
+                            android:textSize="16sp"
+
+                            android:textStyle="bold" />
+
+
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="Scan and transfer to desktop\nUSB · WiFi · Bluetooth"
+
+                            android:textColor="#1A3A35"
+
+                            android:textSize="12sp" />
+
+                    </LinearLayout>
+
+
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="›"
+
+                        android:textColor="#0D1117"
+
+                        android:textSize="24sp"
+
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+            <!-- Action: View on Mobile -->
+
+            <androidx.cardview.widget.CardView
+
+                android:id="@+id/btnViewOnMobile"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="96dp"
+
+                android:foreground="?attr/selectableItemBackground"
+
+                android:clickable="true"
+
+                android:focusable="true"
+
+                app:cardBackgroundColor="@color/surface_dark"
+
+                app:cardCornerRadius="20dp"
+
+                app:cardElevation="4dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="match_parent"
+
+                    android:gravity="center_vertical"
+
+                    android:orientation="horizontal"
+
+                    android:paddingHorizontal="24dp">
+
+
+
+                    <TextView
+
+                        android:layout_width="52dp"
+
+                        android:layout_height="52dp"
+
+                        android:background="@drawable/circle_bg_secondary"
+
+                        android:gravity="center"
+
+                        android:text="📱"
+
+                        android:textSize="24sp" />
+
+
+
+                    <LinearLayout
+
+                        android:layout_width="0dp"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_weight="1"
+
+                        android:orientation="vertical"
+
+                        android:paddingStart="16dp">
+
+
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="View in Mobile Only"
+
+                            android:textColor="@color/white"
+
+                            android:textSize="16sp"
+
+                            android:textStyle="bold" />
+
+
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="Retrieve and decrypt directly\nRequires Biometric auth"
+
+                            android:textColor="@color/text_muted"
+
+                            android:textSize="12sp" />
+
+                    </LinearLayout>
+
+
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="›"
+
+                        android:textColor="@color/text_muted"
+
+                        android:textSize="24sp"
+
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+        </LinearLayout>
+
+
+
+        <!-- ═══════════════════════════════════════════════════════════
+
+             SCREEN 2: METHOD PICKER (USB / WiFi / Bluetooth)
+
+             ═══════════════════════════════════════════════════════════ -->
+
+        <LinearLayout
+
+            android:id="@+id/screenMethodPicker"
+
+            android:layout_width="match_parent"
+
+            android:layout_height="match_parent"
+
+            android:orientation="vertical"
+
+            android:background="@color/bg_dark"
+
+            android:padding="24dp">
+
+
+
+            <!-- Back bar -->
+
+            <LinearLayout
+
+                android:layout_width="match_parent"
+
+                android:layout_height="56dp"
+
+                android:gravity="center_vertical"
+
+                android:orientation="horizontal"
+
+                android:layout_marginBottom="8dp">
+
+
+
+                <TextView
+
+                    android:id="@+id/btnMethodBack"
+
+                    android:layout_width="wrap_content"
+
+                    android:layout_height="wrap_content"
+
+                    android:text="← Back"
+
+                    android:textColor="@color/text_muted"
+
+                    android:textSize="14sp"
+
+                    android:padding="8dp"
+
+                    android:clickable="true"
+
+                    android:focusable="true" />
+
+            </LinearLayout>
+
+
+
+            <TextView
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="Select Connection"
+
+                android:textColor="@color/white"
+
+                android:textSize="24sp"
+
+                android:textStyle="bold"
+
+                android:layout_marginBottom="6dp" />
+
+
+
+            <TextView
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="Select a connection method to send scanned QR data to the desktop app."
+
+                android:textColor="@color/text_muted"
+
+                android:textSize="13sp"
+
+                android:layout_marginBottom="28dp" />
+
+
+
+            <!-- USB Card -->
+
+            <androidx.cardview.widget.CardView
+
+                android:id="@+id/btnMethodUsb"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:layout_marginBottom="14dp"
+
+                android:clickable="true"
+
+                android:focusable="true"
+
+                android:foreground="?attr/selectableItemBackground"
+
+                app:cardBackgroundColor="@color/surface_dark"
+
+                app:cardCornerRadius="18dp"
+
+                app:cardElevation="4dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="horizontal"
+
+                    android:padding="20dp"
+
+                    android:gravity="center_vertical">
+
+
+
+                    <TextView
+
+                        android:layout_width="52dp"
+
+                        android:layout_height="52dp"
+
+                        android:background="@drawable/circle_bg_primary"
+
+                        android:gravity="center"
+
+                        android:text="🔌"
+
+                        android:textSize="24sp" />
+
+
+
+                    <LinearLayout
+
+                        android:layout_width="0dp"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_weight="1"
+
+                        android:orientation="vertical"
+
+                        android:paddingStart="16dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="horizontal"
+
+                            android:gravity="center_vertical"
+
+                            android:layout_marginBottom="4dp">
+
+                            <TextView
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="USB Cable"
+
+                                android:textColor="@color/white"
+
+                                android:textSize="16sp"
+
+                                android:textStyle="bold" />
+
+                            <TextView
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:layout_marginStart="8dp"
+
+                                android:background="@drawable/badge_green"
+
+                                android:text=" MOST SECURE "
+
+                                android:textColor="@color/color_success"
+
+                                android:textSize="9sp"
+
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="Physical cable · Secure direct link"
+
+                            android:textColor="@color/text_muted"
+
+                            android:textSize="12sp" />
+
+                    </LinearLayout>
+
+
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="›"
+
+                        android:textColor="@color/text_muted"
+
+                        android:textSize="22sp" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+            <!-- Bluetooth Card -->
+
+            <androidx.cardview.widget.CardView
+
+                android:id="@+id/btnMethodBluetooth"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:layout_marginBottom="14dp"
+
+                android:clickable="true"
+
+                android:focusable="true"
+
+                android:foreground="?attr/selectableItemBackground"
+
+                app:cardBackgroundColor="@color/surface_dark"
+
+                app:cardCornerRadius="18dp"
+
+                app:cardElevation="4dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="horizontal"
+
+                    android:padding="20dp"
+
+                    android:gravity="center_vertical">
+
+
+
+                    <TextView
+
+                        android:layout_width="52dp"
+
+                        android:layout_height="52dp"
+
+                        android:background="@drawable/circle_bg_secondary"
+
+                        android:gravity="center"
+
+                        android:text="🔵"
+
+                        android:textSize="24sp" />
+
+
+
+                    <LinearLayout
+
+                        android:layout_width="0dp"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_weight="1"
+
+                        android:orientation="vertical"
+
+                        android:paddingStart="16dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="horizontal"
+
+                            android:gravity="center_vertical"
+
+                            android:layout_marginBottom="4dp">
+
+                            <TextView
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="Bluetooth"
+
+                                android:textColor="@color/white"
+
+                                android:textSize="16sp"
+
+                                android:textStyle="bold" />
+
+                            <TextView
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:layout_marginStart="8dp"
+
+                                android:background="@drawable/badge_blue"
+
+                                android:text=" SECURE "
+
+                                android:textColor="#58A6FF"
+
+                                android:textSize="9sp"
+
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="Wireless · Peer-to-peer · Direct link"
+
+                            android:textColor="@color/text_muted"
+
+                            android:textSize="12sp" />
+
+                    </LinearLayout>
+
+
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="›"
+
+                        android:textColor="@color/text_muted"
+
+                        android:textSize="22sp" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+            <!-- WiFi Card -->
+
+            <androidx.cardview.widget.CardView
+
+                android:id="@+id/btnMethodWifi"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:clickable="true"
+
+                android:focusable="true"
+
+                android:foreground="?attr/selectableItemBackground"
+
+                app:cardBackgroundColor="@color/surface_dark"
+
+                app:cardCornerRadius="18dp"
+
+                app:cardElevation="4dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="horizontal"
+
+                    android:padding="20dp"
+
+                    android:gravity="center_vertical">
+
+
+
+                    <TextView
+
+                        android:layout_width="52dp"
+
+                        android:layout_height="52dp"
+
+                        android:background="@drawable/circle_bg_warning"
+
+                        android:gravity="center"
+
+                        android:text="📶"
+
+                        android:textSize="24sp" />
+
+
+
+                    <LinearLayout
+
+                        android:layout_width="0dp"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_weight="1"
+
+                        android:orientation="vertical"
+
+                        android:paddingStart="16dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="horizontal"
+
+                            android:gravity="center_vertical"
+
+                            android:layout_marginBottom="4dp">
+
+                            <TextView
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="WiFi"
+
+                                android:textColor="@color/white"
+
+                                android:textSize="16sp"
+
+                                android:textStyle="bold" />
+
+                            <TextView
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:layout_marginStart="8dp"
+
+                                android:background="@drawable/badge_yellow"
+
+                                android:text=" NETWORK "
+
+                                android:textColor="@color/color_warning"
+
+                                android:textSize="9sp"
+
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <TextView
+
+                            android:layout_width="wrap_content"
+
+                            android:layout_height="wrap_content"
+
+                            android:text="Same local WiFi · Enter laptop IP address"
+
+                            android:textColor="@color/text_muted"
+
+                            android:textSize="12sp" />
+
+                    </LinearLayout>
+
+
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="›"
+
+                        android:textColor="@color/text_muted"
+
+                        android:textSize="22sp" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+            <!-- WiFi IP input (hidden initially, shown when WiFi picked) -->
+
+            <LinearLayout
+
+                android:id="@+id/wifiInputLayout"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:orientation="vertical"
+
+                android:visibility="gone"
+
+                android:layout_marginTop="16dp">
+
+
+
+                <TextView
+
+                    android:layout_width="wrap_content"
+
+                    android:layout_height="wrap_content"
+
+                    android:text="Enter laptop IP address:"
+
+                    android:textColor="@color/text_muted"
+
+                    android:textSize="12sp"
+
+                    android:layout_marginBottom="6dp" />
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="horizontal">
+
+
+
+                    <EditText
+
+                        android:id="@+id/wifiIpInput"
+
+                        android:layout_width="0dp"
+
+                        android:layout_height="52dp"
+
+                        android:layout_weight="1"
+
+                        android:backgroundTint="@color/surface_dark"
+
+                        android:hint="e.g. 192.168.1.10"
+
+                        android:inputType="text"
+
+                        android:textColor="@color/white"
+
+                        android:textColorHint="@color/text_muted"
+
+                        android:textSize="15sp"
+
+                        android:padding="12dp"
+
+                        android:layout_marginEnd="10dp"
+
+                        tools:ignore="LabelFor" />
+
+
+
+                    <Button
+
+                        android:id="@+id/wifiConnectBtn"
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="52dp"
+
+                        android:backgroundTint="@color/color_primary"
+
+                        android:text="Connect →"
+
+                        android:textAllCaps="false"
+
+                        android:textColor="#0D1117"
+
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+
+
+            <!-- Bluetooth device list (hidden initially) -->
+
+            <LinearLayout
+
+                android:id="@+id/btDeviceLayout"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:orientation="vertical"
+
+                android:visibility="gone"
+
+                android:layout_marginTop="16dp">
+
+
+
+                <TextView
+
+                    android:layout_width="wrap_content"
+
+                    android:layout_height="wrap_content"
+
+                    android:text="Select paired laptop:"
+
+                    android:textColor="@color/text_muted"
+
+                    android:textSize="12sp"
+
+                    android:layout_marginBottom="8dp" />
+
+
+
+                <LinearLayout
+
+                    android:id="@+id/btDeviceList"
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="vertical" />
+
+
+
+                <TextView
+
+                    android:id="@+id/btNoDevicesText"
+
+                    android:layout_width="wrap_content"
+
+                    android:layout_height="wrap_content"
+
+                    android:text="No paired devices found.\nPair laptop via Settings → Bluetooth first."
+
+                    android:textColor="@color/text_muted"
+
+                    android:textSize="12sp"
+
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+
+
+        </LinearLayout>
+
+
+
+        <!-- ═══════════════════════════════════════════════════════════
+
+             SCREEN 3: QR SCANNER
+
+             ═══════════════════════════════════════════════════════════ -->
+
+        <FrameLayout
+
+            android:id="@+id/screenScanner"
+
+            android:layout_width="match_parent"
+
+            android:layout_height="match_parent"
+
+            android:background="#000000">
+
+
+
+            <!-- Camera preview (full screen) -->
+
+            <androidx.camera.view.PreviewView
+
+                android:id="@+id/previewView"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="match_parent" />
+
+
+
+            <!-- Dimming overlay (top + sides) -->
+
+            <View
+
+                android:layout_width="match_parent"
+
+                android:layout_height="match_parent"
+
+                android:background="@drawable/scan_overlay" />
+
+
+
+            <!-- Back button overlay -->
+
+            <TextView
+
+                android:id="@+id/btnScannerBack"
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:layout_margin="16dp"
+
+                android:background="#88000000"
+
+                android:paddingHorizontal="16dp"
+
+                android:paddingVertical="8dp"
+
+                android:text="← Back"
+
+                android:textColor="@color/white"
+
+                android:textSize="14sp"
+
+                android:clickable="true"
+
+                android:focusable="true" />
+
+
+
+            <!-- Connection method badge (top-right) -->
+
+            <TextView
+
+                android:id="@+id/connectionBadge"
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:layout_gravity="top|end"
+
+                android:layout_margin="16dp"
+
+                android:background="#88000000"
+
+                android:paddingHorizontal="14dp"
+
+                android:paddingVertical="6dp"
+
+                android:text="🔌 USB"
+
+                android:textColor="@color/color_primary"
+
+                android:textSize="12sp"
+
+                android:textStyle="bold" />
+
+
+
+            <!-- Status card at bottom -->
+
+            <androidx.cardview.widget.CardView
+
+                android:id="@+id/scanStatusCard"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:layout_gravity="bottom"
+
+                app:cardBackgroundColor="@color/surface_dark"
+
+                app:cardCornerRadius="24dp"
+
+                app:cardElevation="12dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="vertical"
+
+                    android:padding="24dp">
+
+
+
+                    <TextView
+
+                        android:id="@+id/scanStatusText"
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="📸  Align QR code within the frame"
+
+                        android:textColor="@color/white"
+
+                        android:textSize="15sp"
+
+                        android:textStyle="bold"
+
+                        android:layout_marginBottom="4dp" />
+
+
+
+                    <TextView
+
+                        android:id="@+id/scanSubText"
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="Hold steady — auto-detects when in frame"
+
+                        android:textColor="@color/text_muted"
+
+                        android:textSize="12sp" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+        </FrameLayout>
+
+
+
+        <!-- ═══════════════════════════════════════════════════════════
+
+             SCREEN 4: RESULT
+
+             ═══════════════════════════════════════════════════════════ -->
+
+        <LinearLayout
+
+            android:id="@+id/screenResult"
+
+            android:layout_width="match_parent"
+
+            android:layout_height="match_parent"
+
+            android:orientation="vertical"
+
+            android:gravity="center"
+
+            android:padding="32dp"
+
+            android:background="@color/bg_dark">
+
+
+
+            <!-- Result icon -->
+
+            <TextView
+
+                android:id="@+id/resultIcon"
+
+                android:layout_width="90dp"
+
+                android:layout_height="90dp"
+
+                android:background="@drawable/circle_bg_primary"
+
+                android:gravity="center"
+
+                android:text="✅"
+
+                android:textSize="40sp"
+
+                android:layout_marginBottom="24dp" />
+
+
+
+            <!-- Result title -->
+
+            <TextView
+
+                android:id="@+id/resultTitle"
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="QR Code Sent!"
+
+                android:textColor="@color/white"
+
+                android:textSize="24sp"
+
+                android:textStyle="bold"
+
+                android:layout_marginBottom="10dp" />
+
+
+
+            <!-- Result subtitle -->
+
+            <TextView
+
+                android:id="@+id/resultSubtitle"
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:text="Data sent to desktop app.\nEnter manager password on laptop to view Form 16."
+
+                android:textColor="@color/text_muted"
+
+                android:textSize="14sp"
+
+                android:gravity="center"
+
+                android:layout_marginBottom="32dp" />
+
+
+
+            <!-- Payload preview card -->
+
+            <androidx.cardview.widget.CardView
+
+                android:layout_width="match_parent"
+
+                android:layout_height="wrap_content"
+
+                android:layout_marginBottom="32dp"
+
+                app:cardBackgroundColor="@color/surface_dark"
+
+                app:cardCornerRadius="16dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="vertical"
+
+                    android:padding="20dp">
+
+
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="Scanned Payload Preview"
+
+                        android:textColor="@color/text_muted"
+
+                        android:textSize="11sp"
+
+                        android:layout_marginBottom="6dp" />
+
+
+
+                    <TextView
+
+                        android:id="@+id/resultPayloadText"
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="—"
+
+                        android:textColor="@color/color_primary"
+
+                        android:textSize="12sp"
+
+                        android:fontFamily="monospace" />
+
+                </LinearLayout>
+
+            </androidx.cardview.widget.CardView>
+
+
+
+            <!-- Scan again -->
+
+            <Button
+
+                android:id="@+id/btnScanAgain"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="56dp"
+
+                android:backgroundTint="@color/color_primary"
+
+                android:text="Scan Another QR Code"
+
+                android:textAllCaps="false"
+
+                android:textColor="#0D1117"
+
+                android:textSize="15sp"
+
+                android:textStyle="bold"
+
+                android:layout_marginBottom="12dp" />
+
+
+
+            <Button
+
+                android:id="@+id/btnResultHome"
+
+                android:layout_width="match_parent"
+
+                android:layout_height="50dp"
+
+                android:backgroundTint="@color/surface_dark"
+
+                android:text="Back to Home"
+
+                android:textAllCaps="false"
+
+                android:textColor="@color/text_muted"
+
+                android:textSize="14sp" />
+
+
+
+        </LinearLayout>
+
+
+
+        <!-- ═══════════════════════════════════════════════════════════
+
+             SCREEN 5: FORM 16 DETAIL VIEW (MOBILE DECRYPTION)
+
+             ═══════════════════════════════════════════════════════════ -->
+
+        <LinearLayout
+
+            android:id="@+id/screenDetail"
+
+            android:layout_width="match_parent"
+
+            android:layout_height="match_parent"
+
+            android:orientation="vertical"
+
+            android:background="@color/bg_dark">
+
+
+
+            <!-- Navbar -->
+
+            <LinearLayout
+
+                android:layout_width="match_parent"
+
+                android:layout_height="56dp"
+
+                android:gravity="center_vertical"
+
+                android:orientation="horizontal"
+
+                android:background="@color/surface_dark"
+
+                android:paddingHorizontal="16dp">
+
+
+
+                <TextView
+
+                    android:id="@+id/btnDetailBack"
+
+                    android:layout_width="wrap_content"
+
+                    android:layout_height="wrap_content"
+
+                    android:text="← Close"
+
+                    android:textColor="@color/color_primary"
+
+                    android:textSize="14sp"
+
+                    android:padding="8dp"
+
+                    android:clickable="true"
+
+                    android:focusable="true" />
+
+
+
+                <TextView
+
+                    android:layout_width="0dp"
+
+                    android:layout_height="wrap_content"
+
+                    android:layout_weight="1"
+
+                    android:text="Form 16 Report"
+
+                    android:textColor="@color/white"
+
+                    android:textSize="16sp"
+
+                    android:textStyle="bold"
+
+                    android:gravity="center"
+
+                    android:layout_marginEnd="40dp" />
+
+            </LinearLayout>
+
+
+
+            <!-- Scrollable Report Details -->
+
+            <ScrollView
+
+                android:layout_width="match_parent"
+
+                android:layout_height="match_parent"
+
+                android:padding="16dp"
+
+                android:scrollbarSize="2dp">
+
+
+
+                <LinearLayout
+
+                    android:layout_width="match_parent"
+
+                    android:layout_height="wrap_content"
+
+                    android:orientation="vertical">
+
+
+
+                    <!-- Basic Header details card -->
+
+                    <androidx.cardview.widget.CardView
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_marginBottom="16dp"
+
+                        app:cardBackgroundColor="@color/surface_dark"
+
+                        app:cardCornerRadius="16dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="match_parent"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="vertical"
+
+                            android:padding="16dp">
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailEmpName"
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="Employee Name"
+
+                                android:textColor="@color/color_primary"
+
+                                android:textSize="18sp"
+
+                                android:textStyle="bold"
+
+                                android:layout_marginBottom="6dp" />
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailEmpYears"
+
+                                android:layout_width="wrap_content"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="FY: 2023-24  |  AY: 2024-25"
+
+                                android:textColor="@color/white"
+
+                                android:textSize="13sp"
+
+                                android:layout_marginBottom="12dp" />
+
+
+
+                            <View
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="1dp"
+
+                                android:background="@color/color_border"
+
+                                android:layout_marginBottom="12dp" />
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailEmpInfoBlock"
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="PAN: -\nEmail: -\nMobile: -\nAddress: -"
+
+                                android:textColor="@color/text_muted"
+
+                                android:textSize="12sp"
+
+                                android:lineSpacingExtra="4dp" />
+
+                        </LinearLayout>
+
+                    </androidx.cardview.widget.CardView>
+
+
+
+                    <!-- Employer Info Card -->
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="🏢 Employer Details"
+
+                        android:textColor="@color/white"
+
+                        android:textSize="14sp"
+
+                        android:textStyle="bold"
+
+                        android:layout_marginStart="4dp"
+
+                        android:layout_marginBottom="8dp" />
+
+
+
+                    <androidx.cardview.widget.CardView
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_marginBottom="20dp"
+
+                        app:cardBackgroundColor="@color/surface_dark"
+
+                        app:cardCornerRadius="12dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="match_parent"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="vertical"
+
+                            android:padding="16dp">
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailEmployerBlock"
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="Employer: -\nPAN: -\nTAN: -"
+
+                                android:textColor="@color/text_muted"
+
+                                android:textSize="12sp"
+
+                                android:lineSpacingExtra="4dp" />
+
+                        </LinearLayout>
+
+                    </androidx.cardview.widget.CardView>
+
+
+
+                    <!-- Salary Breakup Card -->
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="💰 Salary Details"
+
+                        android:textColor="@color/white"
+
+                        android:textSize="14sp"
+
+                        android:textStyle="bold"
+
+                        android:layout_marginStart="4dp"
+
+                        android:layout_marginBottom="8dp" />
+
+
+
+                    <androidx.cardview.widget.CardView
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_marginBottom="20dp"
+
+                        app:cardBackgroundColor="@color/surface_dark"
+
+                        app:cardCornerRadius="12dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="match_parent"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="vertical"
+
+                            android:padding="16dp">
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailSalaryBlock"
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="Gross Salary: -\nStandard Deduction: -\nHRA Exemption: -\nTotal Salary: -"
+
+                                android:textColor="@color/text_muted"
+
+                                android:textSize="12sp"
+
+                                android:lineSpacingExtra="4dp" />
+
+                        </LinearLayout>
+
+                    </androidx.cardview.widget.CardView>
+
+
+
+                    <!-- Deductions Card -->
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="🧾 Deductions"
+
+                        android:textColor="@color/white"
+
+                        android:textSize="14sp"
+
+                        android:textStyle="bold"
+
+                        android:layout_marginStart="4dp"
+
+                        android:layout_marginBottom="8dp" />
+
+
+
+                    <androidx.cardview.widget.CardView
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_marginBottom="20dp"
+
+                        app:cardBackgroundColor="@color/surface_dark"
+
+                        app:cardCornerRadius="12dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="match_parent"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="vertical"
+
+                            android:padding="16dp">
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailDeductionsBlock"
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="80C Deduction: -\n80D Deduction: -\nTotal Deductions: -"
+
+                                android:textColor="@color/text_muted"
+
+                                android:textSize="12sp"
+
+                                android:lineSpacingExtra="4dp" />
+
+                        </LinearLayout>
+
+                    </androidx.cardview.widget.CardView>
+
+
+
+                    <!-- Tax Calculations Card -->
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="💵 Tax Calculations"
+
+                        android:textColor="@color/white"
+
+                        android:textSize="14sp"
+
+                        android:textStyle="bold"
+
+                        android:layout_marginStart="4dp"
+
+                        android:layout_marginBottom="8dp" />
+
+
+
+                    <androidx.cardview.widget.CardView
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_marginBottom="20dp"
+
+                        app:cardBackgroundColor="@color/surface_dark"
+
+                        app:cardCornerRadius="12dp">
+
+
+
+                        <LinearLayout
+
+                            android:layout_width="match_parent"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="vertical"
+
+                            android:padding="16dp">
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailTaxBlock"
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="Taxable Income: -\nTax Payable: -\nHealth &amp; Cess: -\nNet Tax Payable: -"
+
+                                android:textColor="@color/text_muted"
+
+                                android:textSize="12sp"
+
+                                android:lineSpacingExtra="4dp" />
+
+                        </LinearLayout>
+
+                    </androidx.cardview.widget.CardView>
+
+
+
+                    <!-- TDS quarters block -->
+
+                    <TextView
+
+                        android:layout_width="wrap_content"
+
+                        android:layout_height="wrap_content"
+
+                        android:text="🗓 Quarterly Tax Deductions (TDS)"
+
+                        android:textColor="@color/white"
+
+                        android:textSize="14sp"
+
+                        android:textStyle="bold"
+
+                        android:layout_marginStart="4dp"
+
+                        android:layout_marginBottom="8dp" />
+
+
+
+                    <androidx.cardview.widget.CardView
+
+                        android:layout_width="match_parent"
+
+                        android:layout_height="wrap_content"
+
+                        android:layout_marginBottom="28dp"
+
+                        app:cardBackgroundColor="@color/surface_dark"
+
+                        app:cardCornerRadius="12dp">
+
+
+
+                        <LinearLayout
+
+                            android:id="@+id/detailTdsLayout"
+
+                            android:layout_width="match_parent"
+
+                            android:layout_height="wrap_content"
+
+                            android:orientation="vertical"
+
+                            android:padding="16dp">
+
+
+
+                            <TextView
+
+                                android:id="@+id/detailTdsBlock"
+
+                                android:layout_width="match_parent"
+
+                                android:layout_height="wrap_content"
+
+                                android:text="No TDS details reported."
+
+                                android:textColor="@color/text_muted"
+
+                                android:textSize="12sp" />
+
+                        </LinearLayout>
+
+                    </androidx.cardview.widget.CardView>
+
+
+
+                </LinearLayout>
+
+            </ScrollView>
+
+        </LinearLayout>
+
+
+
+    </ViewFlipper>
+
+
+
+</FrameLayout>
+
+
+
+package com.example.qrscanner
+
+
+
+import android.util.Base64
+
+import java.security.MessageDigest
+
+import javax.crypto.Cipher
+
+import javax.crypto.Mac
+
+import javax.crypto.SecretKeyFactory
+
+import javax.crypto.spec.GCMParameterSpec
+
+import javax.crypto.spec.PBEKeySpec
+
+import javax.crypto.spec.SecretKeySpec
+
+
+
+object CryptoHelper {
+
+
+
+    /**
+
+     * Derive a key from a password using PBKDF2WithHmacSHA512.
+
+     */
+
+    fun deriveWrappingKey(password: String, salt: ByteArray): ByteArray {
+
+        val spec = PBEKeySpec(password.toCharArray(), salt, 200000, 256)
+
+        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512")
+
+        return factory.generateSecret(spec).encoded
+
+    }
+
+
+
+    /**
+
+     * Decrypt the app_secret payload using the manager password.
+
+     */
+
+    fun decryptAppSecret(saltB64: String, nonceB64: String, ciphertextB64: String, password: String): ByteArray {
+
+        val salt = Base64.decode(saltB64, Base64.DEFAULT)
+
+        val nonce = Base64.decode(nonceB64, Base64.DEFAULT)
+
+        val ciphertext = Base64.decode(ciphertextB64, Base64.DEFAULT)
+
+
+
+        val wrappingKey = deriveWrappingKey(password, salt)
+
+        val keySpec = SecretKeySpec(wrappingKey, "AES")
+
+
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+
+        val gcmSpec = GCMParameterSpec(128, nonce)
+
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+
+        return cipher.doFinal(ciphertext)
+
+    }
+
+
+
+    /**
+
+     * Derive the system key from the app_secret.
+
+     * Python equivalent:
+
+     * system_key = hashlib.sha256(app_secret[:32] + b"system_encryption_key").digest()
+
+     */
+
+    fun deriveSystemKey(appSecret: ByteArray): ByteArray {
+
+        val prefix = appSecret.copyOfRange(0, 32)
+
+        val label = "system_encryption_key".toByteArray(Charsets.UTF_8)
+
+        val combined = prefix + label
+
+        val md = MessageDigest.getInstance("SHA-256")
+
+        return md.digest(combined)
+
+    }
+
+
+
+    /**
+
+     * HKDF Extract and Expand for Triple AES-256-GCM.
+
+     */
+
+    private fun hkdfExpand(prk: ByteArray, info: ByteArray, length: Int): ByteArray {
+
+        // T(1) = HMAC-SHA512(PRK, info | 0x01)
+
+        val mac = Mac.getInstance("HmacSHA512")
+
+        mac.init(SecretKeySpec(prk, "HmacSHA512"))
+
+        val combined = info + byteArrayOf(0x01.toByte())
+
+        val t1 = mac.doFinal(combined)
+
+        return t1.copyOfRange(0, length)
+
+    }
+
+
+
+    private fun hkdfExtract(ikm: ByteArray): ByteArray {
+
+        val zeros = ByteArray(64) // HMAC-SHA512 output size is 64 bytes
+
+        val mac = Mac.getInstance("HmacSHA512")
+
+        mac.init(SecretKeySpec(zeros, "HmacSHA512"))
+
+        return mac.doFinal(ikm)
+
+    }
+
+
+
+    private fun deriveThreeKeys(systemKey: ByteArray): Triple<ByteArray, ByteArray, ByteArray> {
+
+        val infoStrings = listOf("aes256_layer_1_key", "aes256_layer_2_key", "aes256_layer_3_key")
+
+        val prk = hkdfExtract(systemKey)
+
+        val keys = infoStrings.map { info ->
+
+            hkdfExpand(prk, info.toByteArray(Charsets.UTF_8), 32)
+
+        }
+
+        return Triple(keys[0], keys[1], keys[2])
+
+    }
+
+
+
+    /**
+
+     * Decrypt data encrypted using the Triple AES-256-GCM scheme.
+
+     * Python equivalent:
+
+     * decrypt_data(ciphertext, system_key)
+
+     */
+
+    fun decryptData(ciphertextB64: String, systemKey: ByteArray): String {
+
+        if (ciphertextB64.isEmpty()) return ""
+
+        try {
+
+            val (k1, k2, k3) = deriveThreeKeys(systemKey)
+
+            val data = Base64.decode(ciphertextB64, Base64.DEFAULT)
+
+
+
+            // Layer 3 Decryption
+
+            val nonce3 = data.copyOfRange(0, 12)
+
+            val enc3 = data.copyOfRange(12, data.size)
+
+            val blob2 = decryptAesGcm(enc3, k3, nonce3)
+
+
+
+            // Layer 2 Decryption
+
+            val nonce2 = blob2.copyOfRange(0, 12)
+
+            val enc2 = blob2.copyOfRange(12, blob2.size)
+
+            val blob1 = decryptAesGcm(enc2, k2, nonce2)
+
+
+
+            // Layer 1 Decryption
+
+            val nonce1 = blob1.copyOfRange(0, 12)
+
+            val enc1 = blob1.copyOfRange(12, blob1.size)
+
+            val plaintextBytes = decryptAesGcm(enc1, k1, nonce1)
+
+
+
+            return String(plaintextBytes, Charsets.UTF_8)
+
+        } catch (e: Exception) {
+
+            return "[Decryption Error: ${e.message}]"
+
+        }
+
+    }
+
+
+
+    private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, nonce: ByteArray): ByteArray {
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+
+        val keySpec = SecretKeySpec(key, "AES")
+
+        val gcmSpec = GCMParameterSpec(128, nonce)
+
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+
+        return cipher.doFinal(ciphertext)
+
+    }
+
+}
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+
+    xmlns:tools="http://schemas.android.com/tools">
+
+
+
+    <!-- Camera -->
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+
+
+
+    <!-- Network (WiFi) -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+
+
+    <!-- Vibration -->
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+
+
+    <!-- Bluetooth (classic) — for Android < 12 -->
+
+    <uses-permission android:name="android.permission.BLUETOOTH"
+
+        android:maxSdkVersion="30" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+
+        android:maxSdkVersion="30" />
+
+
+
+    <!-- Bluetooth — for Android 12+ -->
+
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+
+
+
+    <application
+
+        android:allowBackup="true"
+
+        android:label="@string/app_name"
+
+        android:supportsRtl="true"
+
+        android:theme="@style/Theme.Form16QRScanner"
+
+        tools:targetApi="31">
+
+
+
+        <activity
+
+            android:name=".MainActivity"
+
+            android:exported="true"
+
+            android:screenOrientation="portrait"
+
+            tools:ignore="LockedOrientationActivity">
+
+            <intent-filter>
+
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+
+            </intent-filter>
+
+        </activity>
+
+    </application>
+
+</manifest>
+
+
+
+plugins {
+
+    id 'com.android.application'
+
+    id 'org.jetbrains.kotlin.android'
+
+}
+
+
+
+android {
+
+    namespace 'com.example.qrscanner'
+
+    compileSdk 34
+
+
+
+    defaultConfig {
+
+        applicationId "com.example.qrscanner"
+
+        minSdk 24
+
+        targetSdk 34
+
+        versionCode 1
+
+        versionName "1.0"
+
+
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+    }
+
+
+
+    buildTypes {
+
+        release {
+
+            minifyEnabled false
+
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+        }
+
+    }
+
+    compileOptions {
+
+        sourceCompatibility JavaVersion.VERSION_1_8
+
+        targetCompatibility JavaVersion.VERSION_1_8
+
+    }
+
+    kotlinOptions {
+
+        jvmTarget = '1.8'
+
+    }
+
+    buildFeatures {
+
+        viewBinding true
+
+    }
+
+}
+
+
+
+dependencies {
+
+    implementation 'androidx.core:core-ktx:1.12.0'
+
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+
+    implementation 'com.google.android.material:material:1.11.0'
+
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+
+
+    // CameraX
+
+    def camerax_version = "1.3.1"
+
+    implementation "androidx.camera:camera-core:${camerax_version}"
+
+    implementation "androidx.camera:camera-camera2:${camerax_version}"
+
+    implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+
+    implementation "androidx.camera:camera-view:${camerax_version}"
+
+
+
+    // ML Kit Barcode Scanning
+
+    implementation 'com.google.mlkit:barcode-scanning:17.2.0'
+
+
+
+    // Coroutines
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+
+
+    // BCrypt for password hashing on mobile
+
+    implementation 'org.mindrot:jbcrypt:0.4'
+
+
+
+    // Biometric authentication (Fingerprint)
+
+    implementation 'androidx.biometric:biometric:1.2.0-alpha05'
+
+}
+
+
+
+

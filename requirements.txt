@@ -1,0 +1,12 @@
+customtkinter>=5.2.2
+supabase>=2.3.0
+cryptography>=42.0.0
+qrcode[pil]>=7.4.2
+opencv-python>=4.9.0
+pyzbar>=0.1.9
+Pillow>=10.2.0
+bcrypt>=4.1.2
+python-dotenv>=1.0.1
+CTkTable>=0.3
+requests>=2.31.0
+numpy>=1.26.0

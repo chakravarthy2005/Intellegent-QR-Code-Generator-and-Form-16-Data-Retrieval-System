@@ -1,0 +1,78 @@
+[
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_fragment_second.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_second.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_fragment_first.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_first.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_badge_green.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/badge_green.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_content_ble_manager.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/content_ble_manager.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_activity_ble_manager.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/activity_ble_manager.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/navigation_nav_graph2.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/navigation/nav_graph2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_content_ble_manager2.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/content_ble_manager2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_fragment_first2.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_first2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_circle_bg_dark.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/circle_bg_dark.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/navigation_nav_graph.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/navigation/nav_graph.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_activity_ble_manager2.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/activity_ble_manager2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_circle_bg_secondary.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/circle_bg_secondary.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_badge_yellow.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/badge_yellow.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_activity_main.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_scan_overlay.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/scan_overlay.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_badge_blue.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/badge_blue.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_circle_bg_primary.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/circle_bg_primary.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/layout_fragment_second2.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_second2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-debug-53:/drawable_circle_bg_warning.xml.flat",
+        "source": "com.example.qrscanner.app-main-55:/drawable/circle_bg_warning.xml"
+    }
+]

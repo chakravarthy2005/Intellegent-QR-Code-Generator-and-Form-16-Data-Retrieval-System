@@ -1,0 +1,38 @@
+[
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/content_ble_manager2.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/content_ble_manager2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/content_ble_manager.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/content_ble_manager.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/fragment_second2.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_second2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/fragment_first2.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_first2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/activity_ble_manager2.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/activity_ble_manager2.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/fragment_first.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_first.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/activity_main.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/activity_ble_manager.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/activity_ble_manager.xml"
+    },
+    {
+        "merged": "com.example.qrscanner.app-mergeDebugResources-52:/layout/fragment_second.xml",
+        "source": "com.example.qrscanner.app-main-55:/layout/fragment_second.xml"
+    }
+]

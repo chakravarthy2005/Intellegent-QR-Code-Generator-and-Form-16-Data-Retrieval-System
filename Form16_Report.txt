@@ -1,0 +1,112 @@
+============================================================
+FORM 16 - INCOME TAX CERTIFICATE
+============================================================
+
+
+FORM 16 PERIOD
+----------------------------------------
+  Form16 Id: 7
+  Financial Year: FY 2024-2025
+  Assessment Year: AY 2025-2026
+  Employment From: 01-04-2024
+  Employment To: 31-03-2025
+
+EMPLOYEE DETAILS
+----------------------------------------
+  Employee Name: Rahul Sharma
+  Pan: ABCDE1234F
+  Reference Number: REF-99887
+  Address: 789 Oak Lane, Indiranagar
+  City: Bangalore
+  Pin Code: 560038
+  Email: rahul@acme.com
+  Mobile Number: 9876543210
+
+EMPLOYER DETAILS
+----------------------------------------
+  Employer Name: Acme Corporation Ltd
+  Pan: MUMA12345B
+  Tan: TAN1234567
+  Address: 456 Tech Park, Sector 5, Bangalore
+
+SALARY DETAILS
+----------------------------------------
+  Gross Salary: 1200000.00
+  Perquisites: 50000.00
+  Total Salary: 1250000.00
+  Hra Exemption: 120000.00
+  Travel Allowance: 24000.00
+  Standard Deduction: 50000.00
+  Professional Tax: 2400.00
+  Total Salary After Exemptions: 1053600.00
+
+OTHER INCOME
+----------------------------------------
+  House Property Income: 0.00
+  Other Sources Income: 15000.00
+  Total Other Income: 15000.00
+
+DEDUCTIONS
+----------------------------------------
+  Deduction 80C: 150000.00
+  Deduction 80Ccc: 0.00
+  Deduction 80Ccd1: 50000.00
+  Deduction 80Ccd1B: 0.00
+  Deduction 80Ccd2: 0.00
+  Deduction 80D: 25000.00
+  Deduction 80E: 0.00
+  Deduction 80G: 10000.00
+  Deduction 80Tta: 10000.00
+  Other Deductions: 0.00
+  Total Deductions: 245000.00
+
+TAX COMPUTATION
+----------------------------------------
+  Gross Total Income: 1068600.00
+  Taxable Income: 823600.00
+  Income Tax: 89720.00
+  Rebate 87A: 0.00
+  Surcharge: 0.00
+  Health Education Cess: 3588.80
+  Tax Payable: 93308.80
+  Relief 89: 0.00
+  Net Tax Payable: 93308.80
+
+TDS DETAILS
+----------------------------------------
+  quarter: Q1
+  receipt_number: REC-Q1-1
+  amount_paid: 300000.00
+  tax_deducted: 22500.00
+  tax_deposited: 22500.00
+  challan_number: CH-111
+  bsr_code: BSR-11111
+  challan_date: 15-07-2024
+
+  quarter: Q2
+  receipt_number: REC-Q2-1
+  amount_paid: 300000.00
+  tax_deducted: 22500.00
+  tax_deposited: 22500.00
+  challan_number: CH-222
+  bsr_code: BSR-22222
+  challan_date: 15-10-2024
+
+  quarter: Q3
+  receipt_number: REC-Q3-1
+  amount_paid: 300000.00
+  tax_deducted: 22500.00
+  tax_deposited: 22500.00
+  challan_number: CH-333
+  bsr_code: BSR-33333
+  challan_date: 15-01-2025
+
+  quarter: Q4
+  receipt_number: REC-Q4-1
+  amount_paid: 350000.00
+  tax_deducted: 25808.80
+  tax_deposited: 25808.80
+  challan_number: CH-444
+  bsr_code: BSR-44444
+  challan_date: 15-04-2025
+
