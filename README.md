@@ -193,6 +193,15 @@ Each layer uses a **fresh random 12-byte nonce** with a full AEAD authentication
 
 ---
 
+### 📲 Employee Mobile App (QR Viewer)
+
+1. **Install the Employee App** – Download the "Employee QR Viewer" APK from the "Releases" section of the repository or obtain it from your IT department.
+2. **MPIN Setup** – Users must initially set up an MPIN in the mobile app. This MPIN will be used for all subsequent logins to the application.
+3. **View QR Code** – After logging in, the app displays a blur QR code on the main screen. To view  QR code, employees must enter their designated employee password.
+4.  **Password Tips** – The administrator sets the initial password. Contact Admin if you forgot password
+5. **Security** – Do not share your QR code or password with anyone. The QR code is a secure token that grants access to your encrypted Form 16 information only when scanned by an authorized manager app.
+
+
 ## 📁 Project Structure
 
 ```
