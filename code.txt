@@ -120,9 +120,9 @@ class MainActivity : AppCompatActivity() {
 
     // ── Supabase Configuration ────────────────────────────────────────────────
 
-    private val SUPABASE_URL = "https://gkhsgzrpnvxdiyruusgj.supabase.co"
+    private val SUPABASE_URL = "https://your-project-id.supabase.co"
 
-    private val SUPABASE_KEY = "sb_secret_1N6A5lbfgnVpKUg0pOVfOA_sr_cIkzY"
+    private val SUPABASE_KEY = "your-service-role-secret-key"
 
 
 
