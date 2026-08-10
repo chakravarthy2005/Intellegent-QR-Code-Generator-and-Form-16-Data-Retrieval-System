@@ -58,8 +58,8 @@ class MainActivity : AppCompatActivity() {
     private var viewOnMobileMode = false
 
     // ── Supabase Configuration ────────────────────────────────────────────────
-    private val SUPABASE_URL = "https://gkhsgzrpnvxdiyruusgj.supabase.co"
-    private val SUPABASE_KEY = "sb_secret_1N6A5lbfgnVpKUg0pOVfOA_sr_cIkzY"
+    private val SUPABASE_URL = "your supabase url"
+    private val SUPABASE_KEY = "your-service-role-secret-key"
 
     // ── Active Manager Session ────────────────────────────────────────────────
     private var managerUsername: String = ""
