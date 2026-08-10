@@ -1,5 +1,3 @@
-# Intellegent-QR-Code-Generator-and-Form-16-Data-Retrieval-System
-
 # 🔐 Form 16 QR Scanner & Manager Portal
 
 <div align="center">
@@ -18,15 +16,13 @@
 
 ## 📸 Overview
 
-This system allows a **Company Admin** to:
-- Import Form 16 data from CSV files
-- Encrypt all sensitive tax data with **Triple AES-256-GCM**
-- Generate **HMAC-signed private QR codes** for each employee
-- Authorize specific scanner accounts with granular permissions
-- Receive scans from an Android app over **USB or WiFi**
-- Decrypt and view full Form 16 data after authentication
-- Edit and update Form 16 records directly in the cloud database
+The system consists of three components:
 
+- **Desktop Application**: Used by the Company Admin to upload Form 16 data, manage authorized scanner accounts, set permissions, and view encrypted data.
+- **Manager Mobile App** (Scanner): Allows authorized managers to scan employee QR codes via USB or Wi‑Fi and retrieve the decrypted Form 16 information.
+- **Employee Mobile App**: Enables employees to view their QR code, which can be scanned by the manager app.
+
+**Workflow:** An admin creates an account on the desktop app, then signs in with the same credentials on the manager mobile app. The manager scans the QR code shown in the employee app to access the employee’s Form 16 data.
 ---
 
 ## ✨ Features
