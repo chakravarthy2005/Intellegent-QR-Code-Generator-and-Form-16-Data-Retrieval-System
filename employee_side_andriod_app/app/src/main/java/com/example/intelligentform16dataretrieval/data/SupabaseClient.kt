@@ -9,10 +9,10 @@ import org.mindrot.jbcrypt.BCrypt
 
 class SupabaseClient {
     // Supabase Project URL
-    private val supabaseUrl = "https://gkhsgzrpnvxdiyruusgj.supabase.co"
+    private val supabaseUrl = "your supabase url"
 
     // Service Role Key (needed for private table/bucket access)
-    private val supabaseKey = "sb_secret_1N6A5lbfgnVpKUg0pOVfOA_sr_cIkzY"
+    private val supabaseKey = "your supabase secret key"
 
     private val client = OkHttpClient()
 
